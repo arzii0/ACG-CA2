@@ -1,0 +1,2 @@
+This is a sample file for ST2504 Applied Cryptography Assignment 2.
+It will be encrypted, signed, transferred, verified, and stored by the server.

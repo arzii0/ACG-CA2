@@ -38,7 +38,7 @@ def canonical_json(data: dict[str, Any]) -> bytes:
 
 
 def sha256_hex(data: bytes) -> str:
-    """Return a SHA-256 hash as hexadecimal text."""
+    """Returns a SHA-256 hash as hexadecimal text."""
 
     digest = hashes.Hash(hashes.SHA256())
     digest.update(data)

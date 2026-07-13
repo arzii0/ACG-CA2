@@ -1,5 +1,8 @@
 """Generate encrypted RSA keys and CA-signed certificates for the demo PKI."""
 
+# Chung Yi Jun Xavier: implemented PKI generation, encrypted private-key storage,
+# CA certificate signing, and certificate key-usage restrictions.
+
 from __future__ import annotations
 
 import argparse

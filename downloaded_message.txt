@@ -1,1 +1,1 @@
-This is our secure CA2 demonstration.
+Testing secure key generation and transfer.

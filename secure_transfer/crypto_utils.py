@@ -24,6 +24,48 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+AES_KEY_SIZE_BITS = 256
+AES_GCM_NONCE_SIZE_BYTES = 12
+
+
+# Member 2 contribution: Rui Zhong - AES-GCM encryption/decryption and
+# SHA-256 hashing for file contents.
+def generate_aes_key() -> bytes:
+    """Generate a fresh 256-bit AES session key."""
+
+    return AESGCM.generate_key(bit_length=AES_KEY_SIZE_BITS)
+
+
+def calculate_sha256(data: bytes) -> bytes:
+    """Return the 32-byte SHA-256 digest of data."""
+
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(data)
+    return digest.finalize()
+
+
+def encrypt_with_aes_gcm(plaintext: bytes, aes_key: bytes) -> tuple[bytes, bytes]:
+    """Encrypt plaintext and return ``(ciphertext_with_tag, nonce)``.
+
+    A fresh 96-bit nonce is generated for every encryption. ``AESGCM`` appends
+    the 16-byte authentication tag to the returned ciphertext.
+    """
+
+    nonce = os.urandom(AES_GCM_NONCE_SIZE_BYTES)
+    ciphertext = AESGCM(aes_key).encrypt(nonce, plaintext, None)
+    return ciphertext, nonce
+
+
+def decrypt_with_aes_gcm(ciphertext: bytes, aes_key: bytes, nonce: bytes) -> bytes:
+    """Authenticate and decrypt AES-GCM ciphertext.
+
+    Tampering, an incorrect key, or an incorrect nonce causes
+    ``cryptography.exceptions.InvalidTag`` to be raised.
+    """
+
+    return AESGCM(aes_key).decrypt(nonce, ciphertext, None)
+
+
 def b64e(data: bytes) -> str:
     """Convert bytes to base64 text so bytes can be stored inside JSON."""
 
@@ -45,9 +87,7 @@ def canonical_json(data: dict[str, Any]) -> bytes:
 def sha256_hex(data: bytes) -> str:
     """Returns a SHA-256 hash as hexadecimal text."""
 
-    digest = hashes.Hash(hashes.SHA256())
-    digest.update(data)
-    return digest.finalize().hex()
+    return calculate_sha256(data).hex()
 
 
 def load_private_key(path: Path, password: str | None):
@@ -117,11 +157,10 @@ def encrypt_for_storage(server_cert: x509.Certificate, plaintext: bytes) -> dict
     """
 
     # Rui Zhong: fresh random AES key for every stored record.
-    content_key = AESGCM.generate_key(bit_length=256)
+    content_key = generate_aes_key()
 
     # Rui Zhong: GCM requires a unique nonce for each encryption.
-    nonce = os.urandom(12)
-    ciphertext = AESGCM(content_key).encrypt(nonce, plaintext, None)
+    ciphertext, nonce = encrypt_with_aes_gcm(plaintext, content_key)
 
     # Lucas (Role A): wrap the AES key with RSA-OAEP so only the server private key can
     # recover it. RSA protects the 32-byte key only, never the record itself.
@@ -151,7 +190,10 @@ def decrypt_from_storage(server_private_key_path: Path, password: str | None, en
         b64d(envelope["wrapped_key_b64"]),
         padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
     )
-
     # Rui Zhong: AES-256-GCM decryption. This raises InvalidTag if the stored ciphertext was
     # modified, so tampering is detected rather than silently decrypted into wrong data.
-    return AESGCM(content_key).decrypt(b64d(envelope["nonce_b64"]), b64d(envelope["ciphertext_b64"]), None)
+    return decrypt_with_aes_gcm(
+        b64d(envelope["ciphertext_b64"]),
+        content_key,
+        b64d(envelope["nonce_b64"]),
+    )

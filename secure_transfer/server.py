@@ -8,7 +8,11 @@ Main idea:
 3. Receive signed messages/files.
 4. Check SHA-256 integrity and RSA-PSS signature.
 5. Store the record encrypted using AES-256-GCM.
+6. Log every verification result to deployment/logs/server.log.
 """
+
+# Yi Cheng (Role B - Server Program): owns this file. Uses the RSA-OAEP key wrapping and
+# RSA-PSS verification from crypto_utils.py (Role A, Lucas).
 
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ import socket
 import ssl
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,8 +44,9 @@ from secure_transfer.protocol import recv_json, send_json
 
 
 class SecureStorageServer:
-    # Student contribution: this class owns the server-side protocol, encrypted at-rest storage,
-    # and non-repudiation verification evidence for the demo.
+    # Yi Cheng (Role B - Server Program): implemented the TLS 1.3 server socket, the request
+    # handling loop, digest/signature verification of uploads, encrypted at-rest storage of
+    # records, and the verification audit log written to deployment/logs/.
     def __init__(self, host: str, port: int, base_dir: Path):
         # Server network location.
         self.host = host
@@ -52,11 +58,51 @@ class SecureStorageServer:
         self.storage_dir = base_dir / "storage" / "records"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
+        # Yi Cheng: audit log of every verification result. Each client is served on its own
+        # thread, so a lock keeps concurrent log lines from interleaving.
+        self.log_dir = base_dir / "deployment" / "logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path = self.log_dir / "server.log"
+        self._log_lock = threading.Lock()
+
         # Server certificate is used for encrypted storage key wrapping.
         self.server_cert = load_certificate(self.pki_dir / "server.crt")
 
         # Default password is for demo only. In a real system this should be a secret.
         self.server_key_password = os.getenv("ACG_SERVER_KEY_PASSWORD", "changeit")
+
+    # Yi Cheng (Role B): audit logging helpers.
+    def _common_name(self, cert: x509.Certificate) -> str:
+        """Read the Common Name out of a certificate subject."""
+
+        names = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        return names[0].value if names else "unknown"
+
+    def _log(
+        self,
+        event: str,
+        outcome: str,
+        record_id: str = "-",
+        signer: str = "-",
+        digest: str = "-",
+        signature: str = "-",
+    ) -> None:
+        """Record one verification result on screen and in deployment/logs/server.log.
+
+        Only metadata is logged (record id, signer, pass/fail). Message and file contents are
+        never written here, otherwise the log would become a plaintext copy of the records that
+        are deliberately encrypted at rest.
+        """
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = (
+            f"{timestamp}  {event:<8} record={record_id:<32} signer={signer:<16} "
+            f"digest={digest:<4} signature={signature:<4} -> {outcome}"
+        )
+        with self._log_lock:
+            print(line, flush=True)
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
 
     def serve_forever(self) -> None:
         """Start the TLS server and keep accepting clients."""
@@ -91,11 +137,14 @@ class SecureStorageServer:
         """Read one client command and return one JSON response."""
 
         with tls_sock:
+            command = None
+            record_id = "-"
             try:
                 # This is the certificate the client presented during mutual TLS.
                 peer_cert = x509.load_der_x509_certificate(tls_sock.getpeercert(binary_form=True))
                 request = recv_json(tls_sock)
                 command = request.get("command")
+                record_id = str(request.get("record_id", "-")) or "-"
                 if command == "upload":
                     response = self._upload(request, peer_cert)
                 elif command == "list":
@@ -107,7 +156,16 @@ class SecureStorageServer:
                 else:
                     response = {"ok": False, "error": f"Unknown command: {command}"}
             except Exception as exc:  # Keep demo server alive even if one request is malformed.
-                response = {"ok": False, "error": str(exc)}
+                # Yi Cheng: a record that fails to decrypt lands here (AES-GCM rejects modified
+                # ciphertext), so this is the log entry that evidences tamper detection.
+                self._log(
+                    str(command).upper() if command else "REQUEST",
+                    f"ERROR ({type(exc).__name__})",
+                    record_id=record_id,
+                )
+                # InvalidTag and similar exceptions carry no message, so fall back to the
+                # exception type. Otherwise the client just receives an empty error string.
+                response = {"ok": False, "error": str(exc) or type(exc).__name__}
             send_json(tls_sock, response)
 
     def _upload(self, request: dict[str, Any], peer_cert: x509.Certificate) -> dict[str, Any]:
@@ -117,13 +175,16 @@ class SecureStorageServer:
         data = b64d(request["data_b64"])
         signature_b64 = request["signature_b64"]
         claimed_digest = metadata.get("sha256")
+        signer = self._common_name(peer_cert)
 
         # Integrity check: recalculate SHA-256 and compare it to the client value.
         if claimed_digest != sha256_hex(data):
+            self._log("UPLOAD", "REJECTED", signer=signer, digest="FAIL")
             return {"ok": False, "error": "SHA-256 digest does not match uploaded data"}
 
         # Non-repudiation check: verify the client's RSA-PSS signature using its certificate.
         if not verify_metadata_signature(peer_cert, metadata, signature_b64):
+            self._log("UPLOAD", "REJECTED", signer=signer, digest="OK", signature="FAIL")
             return {"ok": False, "error": "Client signature is invalid"}
 
         # Store evidence: data, metadata, signature, and signer certificate.
@@ -139,6 +200,7 @@ class SecureStorageServer:
         # Confidentiality at rest: the package is encrypted before writing to disk.
         envelope = encrypt_for_storage(self.server_cert, json.dumps(package, sort_keys=True).encode("utf-8"))
         (self.storage_dir / f"{record_id}.json").write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        self._log("UPLOAD", "STORED", record_id=record_id, signer=signer, digest="OK", signature="OK")
         return {"ok": True, "record_id": record_id, "message": "Stored encrypted record with valid signature"}
 
     def _list(self) -> dict[str, Any]:
@@ -168,6 +230,7 @@ class SecureStorageServer:
 
         package = self._open_package(record_id)
         verification = self._verify_package(package)
+        self._log_verification("DOWNLOAD", record_id, verification, "RELEASED", "BLOCKED")
         if not verification["valid"]:
             return {"ok": False, "error": "Stored record failed verification", "verification": verification}
         return {
@@ -182,7 +245,28 @@ class SecureStorageServer:
         """Verify one stored record without downloading the data."""
 
         package = self._open_package(record_id)
-        return {"ok": True, "record_id": record_id, "verification": self._verify_package(package)}
+        verification = self._verify_package(package)
+        self._log_verification("VERIFY", record_id, verification, "VALID", "INVALID")
+        return {"ok": True, "record_id": record_id, "verification": verification}
+
+    def _log_verification(
+        self,
+        event: str,
+        record_id: str,
+        verification: dict[str, Any],
+        pass_outcome: str,
+        fail_outcome: str,
+    ) -> None:
+        """Yi Cheng (Role B): turn one verification result into an audit log entry."""
+
+        self._log(
+            event,
+            pass_outcome if verification["valid"] else fail_outcome,
+            record_id=record_id,
+            signer=verification["signer"],
+            digest="OK" if verification["digest_valid"] else "FAIL",
+            signature="OK" if verification["signature_valid"] else "FAIL",
+        )
 
     def _open_package(self, record_id: str) -> dict[str, Any]:
         """Decrypt one encrypted JSON file from storage/records."""

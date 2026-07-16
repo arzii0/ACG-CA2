@@ -1,0 +1,3 @@
+2026-07-16T06:02:55Z  UPLOAD   record=e4b9ec192d63478fb8b84c49b843d831 signer=student-client   digest=OK   signature=OK   -> STORED
+2026-07-16T06:02:55Z  VERIFY   record=e4b9ec192d63478fb8b84c49b843d831 signer=student-client   digest=OK   signature=OK   -> VALID
+2026-07-16T06:02:56Z  VERIFY   record=e4b9ec192d63478fb8b84c49b843d831 signer=-                digest=-    signature=-    -> ERROR (InvalidTag)

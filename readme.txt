@@ -10,67 +10,49 @@ Requirements
 
 Setup
 
-1. Open PowerShell in the project base folder:
+1. Install dependencies:
 
    cd "C:\ACG\ACG CA2\ACG-CA2"
 
-2. Install required Python packages:
-
    python -m pip install -r requirements.txt
 
-3. Set passwords for the encrypted private keys. Replace the example passwords with your own strong demo passwords:
+2. Terminal 1 — generate keys and start server
+
+   cd "C:\ACG\ACG CA2\ACG-CA2"
 
    $env:ACG_CA_KEY_PASSWORD = "your-CA-password"
-   $env:ACG_SERVER_KEY_PASSWORD = "your-server-password"
-   $env:ACG_CLIENT_KEY_PASSWORD = "your-client-password"
 
-4. Generate the Certificate Authority (CA), server, and client keys/certificates:
+   $env:ACG_SERVER_KEY_PASSWORD = "your-server-password"
+
+   $env:ACG_CLIENT_KEY_PASSWORD = "your-client-password"
 
    python -m secure_transfer.pki
 
-The generated key material is saved in deployment\pki\.
-
-Running the Server
-
-Open a PowerShell terminal in the project base folder and run:
-
-   $env:ACG_SERVER_KEY_PASSWORD = "your-server-password"
    python -m secure_transfer.server
 
-The server listens on 127.0.0.1:8443.
+3. Terminal 2 — send and verify
 
-Running the Client
-
-Open a second PowerShell terminal in the project base folder and run:
-
+   cd "C:\ACG\ACG CA2\ACG-CA2" 
+   
    $env:ACG_CLIENT_KEY_PASSWORD = "your-client-password"
-   python -m secure_transfer.client send-message --message "This is a secure message."
 
-The program returns a record_id after a successful upload.
+   python -m secure_transfer.client send-message --message "Testing secure transfer."
 
-Client Commands
-
-List stored records:
+Copy the returned record_id, then run:
 
    python -m secure_transfer.client list
 
-Verify a stored record. Replace RECORD_ID with the returned record ID:
-
-   python -m secure_transfer.client verify --record-id RECORD_ID
-
-Download a verified record:
-
-   python -m secure_transfer.client download --record-id RECORD_ID --out downloaded_message.txt
-
-Send a file:
-
-   python -m secure_transfer.client send-file --path "path\to\file.txt"
+   python -m secure_transfer.client verify --record-id YOUR_RECORD_ID
+   
+   python -m secure_transfer.client download --record-id YOUR_RECORD_ID --out downloaded_message.txt
+   
+   Get-Content downloaded_message.txt
 
 Security Features
 
 - RSA-3072 key pairs for the CA, client, and server.
 - Private keys are stored as password-encrypted PEM files.
-- Passwords are supplied through environment variables instead of hard-coded in the source code.
+- PKI key-generation passwords are supplied through environment variables instead of being hard-coded in pki.py.
 - CA-signed server and client certificates support mutual TLS.
 - TLS 1.3 protects data confidentiality and integrity during transmission.
 - RSA-PSS with SHA-256 provides message integrity and non-repudiation.

@@ -1,7 +1,9 @@
 """Generate encrypted RSA keys and CA-signed certificates for the demo PKI."""
 
-# Chung Yi Jun Xavier: implemented PKI generation, encrypted private-key storage,
-# CA certificate signing, and certificate key-usage restrictions.
+# Task allocation - Xavier (Chung Yi Jun Xavier):
+# Implemented the PKI and key-management component, including RSA-3072 key
+# generation, password-encrypted PEM private keys, CA certificate signing,
+# certificate extensions and certificate key-usage restrictions.
 
 from __future__ import annotations
 

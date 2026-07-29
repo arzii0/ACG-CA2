@@ -22,12 +22,17 @@ from pathlib import Path
 from typing import Any
 
 from secure_transfer.crypto_utils import b64e, sha256_hex, sign_metadata
+from secure_transfer.password_manager import change_private_key_password
 from secure_transfer.protocol import recv_json, send_json
 
 
+# Task allocation - Lucas:
+# Implemented the client-side command-line interface, mutual-TLS requests,
+# signed message/file upload workflow, record listing and verification requests,
+# file download handling, and the controlled RSA-PSS tampering demonstration.
+
+
 class SecureTransferClient:
-    # Student contribution: this client signs transfer metadata before upload so the server can
-    # prove who submitted a stored message or file during the demo.
     def __init__(self, host: str, port: int, base_dir: Path):
         # Server network location.
         self.host = host
@@ -37,8 +42,13 @@ class SecureTransferClient:
         self.base_dir = base_dir
         self.pki_dir = base_dir / "deployment" / "pki"
 
-        # Default password is for demo only. In a real system this should be a secret.
-        self.client_key_password = os.getenv("ACG_CLIENT_KEY_PASSWORD", "changeit")
+        # The private-key password must be supplied through the environment.
+        self.client_key_password = os.getenv("ACG_CLIENT_KEY_PASSWORD")
+        if not self.client_key_password:
+            raise RuntimeError(
+                "ACG_CLIENT_KEY_PASSWORD is not set. "
+                "Set it in the same terminal before running the client."
+            )
 
     def request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send one JSON request to the server using mutual TLS."""
@@ -88,6 +98,55 @@ class SecureTransferClient:
             }
         )
 
+    def tampered_signature_demo(self, message: str) -> dict[str, Any]:
+        """Send deliberately changed metadata to demonstrate signature rejection."""
+
+        data = message.encode("utf-8")
+        metadata = {
+            "kind": "message",
+            "name": "original-message.txt",
+            "sender": "student-client",
+            "size": len(data),
+            "sha256": sha256_hex(data),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Sign the original metadata first, then deliberately change one signed
+        # field. The unchanged signature must no longer verify.
+        signature_b64 = sign_metadata(
+            self.pki_dir / "client.key",
+            self.client_key_password,
+            metadata,
+        )
+        metadata["name"] = "tampered-message.txt"
+
+        return self.request(
+            {
+                "command": "upload",
+                "metadata": metadata,
+                "data_b64": b64e(data),
+                "signature_b64": signature_b64,
+            }
+        )
+
+    def change_password(self) -> dict[str, Any]:
+        """Generate a strong password and re-encrypt the client private key."""
+
+        new_password = change_private_key_password(
+            self.pki_dir / "client.key",
+            self.client_key_password,
+        )
+
+        # This updates the current Python process. The provided PowerShell helper
+        # also updates the environment variable in the user's terminal.
+        self.client_key_password = new_password
+        os.environ["ACG_CLIENT_KEY_PASSWORD"] = new_password
+        return {
+            "ok": True,
+            "message": "Client private-key password changed",
+            "new_password": new_password,
+        }
+
 
 def _print_response(response: dict[str, Any]) -> None:
     print(json.dumps(response, indent=2, sort_keys=True))
@@ -120,6 +179,20 @@ def main() -> None:
     verify = subparsers.add_parser("verify", help="Verify digest and signature for a stored record")
     verify.add_argument("--record-id", required=True)
 
+    tamper_demo = subparsers.add_parser(
+        "tamper-signature-demo",
+        help="Deliberately change signed metadata to demonstrate RSA-PSS rejection",
+    )
+    tamper_demo.add_argument(
+        "--message",
+        default="This message is used for the RSA-PSS tampering demonstration.",
+    )
+
+    subparsers.add_parser(
+        "change-password",
+        help="Generate a strong password and re-encrypt the client private key",
+    )
+
     args = parser.parse_args()
     client = SecureTransferClient(args.host, args.port, Path(args.base_dir).resolve())
 
@@ -138,6 +211,10 @@ def main() -> None:
         if response.get("ok"):
             Path(args.out).write_bytes(base64.b64decode(response["data_b64"].encode("ascii")))
         _print_response(response)
+    elif args.command == "tamper-signature-demo":
+        _print_response(client.tampered_signature_demo(args.message))
+    elif args.command == "change-password":
+        _print_response(client.change_password())
 
 
 if __name__ == "__main__":

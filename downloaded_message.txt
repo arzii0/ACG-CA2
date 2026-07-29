@@ -1,1 +1,1 @@
-This is a secure message.
+Testing secure key generation and transfer.

@@ -11,8 +11,12 @@ Main idea:
 6. Log every verification result to deployment/logs/server.log.
 """
 
-# Yi Cheng (Role B - Server Program): owns this file. Uses the RSA-OAEP key wrapping and
-# RSA-PSS verification from crypto_utils.py (Role A, Lucas).
+# Task allocation - Yi Cheng:
+# Implemented the TLS 1.3 server, mandatory client-certificate authentication,
+# request routing, upload rejection, encrypted record storage, record
+# verification/download controls, concurrency handling and verification audit
+# logging. This file uses Remus's RSA-OAEP and RSA-PSS helpers and Rui Zhong's
+# AES-GCM and SHA-256 helpers from crypto_utils.py.
 
 from __future__ import annotations
 
@@ -68,8 +72,13 @@ class SecureStorageServer:
         # Server certificate is used for encrypted storage key wrapping.
         self.server_cert = load_certificate(self.pki_dir / "server.crt")
 
-        # Default password is for demo only. In a real system this should be a secret.
-        self.server_key_password = os.getenv("ACG_SERVER_KEY_PASSWORD", "changeit")
+        # The server private-key password must be supplied through the environment.
+        self.server_key_password = os.getenv("ACG_SERVER_KEY_PASSWORD")
+        if not self.server_key_password:
+            raise RuntimeError(
+                "ACG_SERVER_KEY_PASSWORD is not set. "
+                "Set it in the same terminal before starting the server."
+            )
 
     # Yi Cheng (Role B): audit logging helpers.
     def _common_name(self, cert: x509.Certificate) -> str:

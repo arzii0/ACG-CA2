@@ -4,10 +4,13 @@ This file keeps the crypto code in one place so the main client/server files are
 to read during demo.
 """
 
-# This file is shared, so contributions are marked per function rather than per file:
-#   Lucas (Role A)  - RSA-OAEP key wrapping/unwrapping and RSA-PSS signing/verification
-#   Rui Zhong       - AES-256-GCM encryption/decryption and SHA-256 hashing
-#   Xavier          - encrypted private-key and certificate loading helpers
+# Task allocation for this shared cryptography file:
+# - Remus: implemented RSA-OAEP AES-key wrapping/unwrapping, RSA-PSS metadata
+#   signing/verification, and the related README demonstration guidance.
+# - Rui Zhong: implemented SHA-256 hashing and AES-256-GCM record
+#   encryption/decryption, including fresh keys and nonces.
+# - Xavier: implemented encrypted private-key and certificate-loading helpers
+#   used by the PKI, client and server components.
 
 from __future__ import annotations
 
@@ -119,7 +122,7 @@ def sign_metadata(private_key_path: Path, password: str | None, metadata: dict[s
     metadata also protects the uploaded content.
     """
 
-    # Lucas (Role A): RSA-PSS signing with the client private key. This is what provides
+    # Remus: RSA-PSS signing with the client private key. This is what provides
     # non-repudiation, because only the holder of the client private key can produce it.
 
     private_key = load_private_key(private_key_path, password)
@@ -134,7 +137,7 @@ def sign_metadata(private_key_path: Path, password: str | None, metadata: dict[s
 def verify_metadata_signature(cert: x509.Certificate, metadata: dict[str, Any], signature_b64: str) -> bool:
     """Return True only if the RSA-PSS signature is valid."""
 
-    # Lucas (Role A): RSA-PSS verification using the client public key taken from the
+    # Remus: RSA-PSS verification using the client public key taken from the
     # client certificate. This is how the server proves the upload came from that client.
     try:
         cert.public_key().verify(
@@ -162,7 +165,7 @@ def encrypt_for_storage(server_cert: x509.Certificate, plaintext: bytes) -> dict
     # Rui Zhong: GCM requires a unique nonce for each encryption.
     ciphertext, nonce = encrypt_with_aes_gcm(plaintext, content_key)
 
-    # Lucas (Role A): wrap the AES key with RSA-OAEP so only the server private key can
+    # Remus: wrap the AES key with RSA-OAEP so only the server private key can
     # recover it. RSA protects the 32-byte key only, never the record itself.
     public_key = server_cert.public_key()
     if not isinstance(public_key, rsa.RSAPublicKey):
@@ -184,7 +187,7 @@ def encrypt_for_storage(server_cert: x509.Certificate, plaintext: bytes) -> dict
 def decrypt_from_storage(server_private_key_path: Path, password: str | None, envelope: dict[str, str]) -> bytes:
     """Decrypt one encrypted storage envelope."""
 
-    # Lucas (Role A): RSA-OAEP unwrap of the AES session key using the server private key.
+    # Remus: RSA-OAEP unwrap of the AES session key using the server private key.
     private_key = load_private_key(server_private_key_path, password)
     content_key = private_key.decrypt(
         b64d(envelope["wrapped_key_b64"]),
